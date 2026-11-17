@@ -4,6 +4,7 @@ import difflib
 import json
 import os
 import re
+import sys
 import unicodedata
 from datetime import datetime, timedelta
 
@@ -21,8 +22,7 @@ CONSIGNE = ("\n\nConsigne : réponds en 1 ou 2 phrases, uniquement avec ce que d
             "ces informations. N'ajoute aucun conseil ni généralité.")
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi"]
 
-# Question originale de l'étudiant : la recherche l'utilise à la place de la
-# requête reformulée par le modèle (qui la déforme parfois).
+# Question originale de l'étudiant (utilisée seulement si définie, voir agent_v3).
 ORIGINAL_QUESTION = ""
 
 
@@ -124,8 +124,9 @@ def search_reglement(query: str) -> str:
     r = _collection().query(query_embeddings=[emb], n_results=3,
                             include=["documents", "metadatas", "distances"])
     rows = list(zip(r["documents"][0], r["metadatas"][0], r["distances"][0]))
+    # stderr : stdout est réservé au protocole MCP
     print("          distances : " + ", ".join(
-        f"art.{m['article']}={dist:.2f}" for _, m, dist in rows))
+        f"art.{m['article']}={dist:.2f}" for _, m, dist in rows), file=sys.stderr)
     if not rows or rows[0][2] > MAX_DISTANCE:
         return "Aucun article pertinent trouvé dans le règlement."
     best = rows[0][2]
@@ -165,6 +166,15 @@ def verifier_module_rattrapage(module: str):
     return key, None
 
 
+def verifier_module(module: str) -> str:
+    """Version JSON de verifier_module_rattrapage (pour MCP)."""
+    key, err = verifier_module_rattrapage(module)
+    if err:
+        return json.dumps({"ok": False, "message": err}, ensure_ascii=False)
+    return json.dumps({"ok": True, "key": key, "nom": CALENDRIER[key]["nom"]},
+                      ensure_ascii=False)
+
+
 def build_demande(key: str, nom: str, numero: str, hospitalisation: bool) -> str:
     """Brouillon de la demande (Article 8). Modèle fixe : le modèle IA n'écrit rien."""
     m = CALENDRIER[key]
@@ -187,3 +197,16 @@ def build_demande(key: str, nom: str, numero: str, hospitalisation: bool) -> str
         f"Fait à Charguia, le {datetime.now().strftime('%d/%m/%Y')}.\n"
         f"Signature : {nom}"
     )
+
+
+def generate_demande(module: str, nom: str, numero_etudiant: str,
+                     hospitalisation: bool = False) -> str:
+    """Génère le brouillon (ne l'envoie jamais). Valide aussi les entrées."""
+    key, err = verifier_module_rattrapage(module)
+    if err:
+        return err
+    if not re.fullmatch(r"[A-Za-zÀ-ÿ\u0600-\u06FF' \-]{3,60}", nom or ""):
+        return "Erreur : nom invalide."
+    if not re.fullmatch(r"[A-Za-z0-9\-]{3,15}", numero_etudiant or ""):
+        return "Erreur : numéro d'étudiant invalide."
+    return build_demande(key, nom, numero_etudiant, hospitalisation)
