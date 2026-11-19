@@ -1,7 +1,7 @@
-"""Assistant de scolarité ISET Charguia : agent à outils (v5.1, fichier unique).
+"""Assistant de scolarité ISET Charguia : agent à outils (v5.3, fichier unique).
 
   python agent/agent_v5.py            # terminal
-  python agent/agent_v5.py --eval     # 40 questions : taux de réussite + temps
+  python agent/agent_v5.py --eval     # questions de test : taux de réussite + temps
   python agent/agent_v5.py --mcp      # serveur MCP (stdio)
   streamlit run agent/agent_v5.py     # interface web
   USE_MCP=1 ...                       # l'agent appelle les outils via MCP
@@ -9,8 +9,8 @@
 QUI FAIT QUOI
   Le MODÈLE décide : quel outil appeler (Session._run_model).
   Le PROGRAMME agit : exécute les outils, refuse hors-sujet/injections, gère le
-  formulaire et le cas « absence », vérifie que la réponse est fondée, et
-  n'envoie jamais sans « oui ».
+  formulaire, les cas « absence » et « document de stage », vérifie que la réponse
+  est fondée, et n'envoie jamais sans « oui ».
 """
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ import os
 import re
 import sys
 import threading
+import smtplib
+from email.message import EmailMessage
 import time
 import unicodedata
 from contextlib import AsyncExitStack
@@ -48,6 +50,13 @@ MARGIN = float(os.getenv("MARGIN", "0.12"))              # écart max avec le me
 TIMEOUT = float(os.getenv("LLM_TIMEOUT", "180"))
 MAX_ROUNDS = 4
 USE_MCP = os.getenv("USE_MCP", "0") == "1"
+
+# ============================================================ EMAIL (SMTP / Gmail)
+# Configure these variables in .env. Never put credentials directly in this file.
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 
 llm = OpenAI(base_url=BASE_URL, api_key="ollama", timeout=TIMEOUT, max_retries=0)
 
@@ -284,6 +293,37 @@ LOCAL_TOOLS = {"get_calendrier": get_calendrier, "search_reglement": search_regl
                "certificat_medical": certificat_medical, "generate_demande": generate_demande}
 
 
+def send_email(to: str, subject: str, body: str) -> str:
+    """Envoie réellement le brouillon par SMTP après validation humaine.
+
+    Gmail : utiliser un mot de passe d'application dans SMTP_PASSWORD,
+    jamais le mot de passe principal du compte.
+    """
+    if not SMTP_USER or not SMTP_PASSWORD:
+        return ("Envoi impossible : SMTP_USER/SMTP_PASSWORD ne sont pas configurés. "
+                "Ajoutez-les dans le fichier .env puis relancez l'application.")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", to or ""):
+        return "Envoi impossible : adresse email destinataire invalide."
+
+    msg = EmailMessage()
+    msg["From"] = SMTP_USER
+    msg["To"] = to.strip()
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
+            smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.send_message(msg)
+    except Exception as e:
+        return f"Envoi impossible : {e}"
+
+    return f"Email envoyé avec succès à {to.strip()}."
+
+
 def _spec(name, desc, props, required):
     return {"type": "function", "function": {"name": name, "description": desc,
             "parameters": {"type": "object", "properties": props, "required": required}}}
@@ -299,7 +339,8 @@ TOOL_SPECS = [
     _spec("certificat_medical", "Étudiant malade ou absent à un examen : date limite du "
           "certificat, rattrapage et démarche. Ne demande que le module.", MODULE_P, ["module"]),
     _spec("demande_rattrapage", "L'étudiant veut rédiger / préparer sa demande de "
-          "rattrapage. Ne demande que le module.", MODULE_P, ["module"]),
+          "rattrapage d'un EXAMEN manqué (jamais pour un stage). Ne demande que le module.",
+          MODULE_P, ["module"]),
 ]
 SPEC_PARAMS = {t["function"]["name"]: set(t["function"]["parameters"]["properties"])
                for t in TOOL_SPECS}
@@ -396,15 +437,26 @@ FOLLOWUP = {"alors", "donc", "ensuite", "apres", "maintenant", "pourquoi", "et",
             "non", "اذن", "لماذا"}
 GREETINGS = {"bonjour", "bonsoir", "salut", "hello", "hey", "مرحبا", "السلام عليكم"}
 
-# « je suis absent », « j'étais absente », « j'ai raté », « غبت » : absence vague, 1re personne
-VAGUE_ABS = re.compile(r"\b(?:je suis|j'?\s?etais|j'?\s?ai ete) absente?\b"
+# Absence vague à la 1re personne. Accepte toutes les formes de « être » et les fautes :
+# « je suis absent », « j'étais absente », « j'était absente », « j etait absente »,
+# « j etatit absente », « j'ai été absent », « j'ai raté », « غبت ».
+VAGUE_ABS = re.compile(r"\b(?:je suis|j'?\s?et\w+|j'?\s?ai ete)\s+absente?\b"
                        r"|\bj'?\s?ai (?:rate|manque)\b|غبت|غائب")
 JUSTIF = re.compile(r"malad|hospital|certificat|medic|justifi|مريض|مستشفى")
 NO_JUSTIF = re.compile(r"sans justificatif|pas de justificatif|pas justifi|non justifi|"
                        r"n'?\s?ai pas (?:de )?justifi")
 
+# « je peux avoir la demande de stage de PFE » : demande d'un DOCUMENT de stage
+STAGE_WORD = re.compile(r"\b(stage|stages|pfe|pfa|convention)\b")
+DOC_WORD = re.compile(r"\b(demande|formulaire|modele|lettre|document|dossier|papier)\b")
+
 
 def is_injection(text): n = norm(text); return any(re.search(p, n) for p in INJECTION)
+
+
+def is_stage_doc(text):
+    n = norm(text)
+    return bool(STAGE_WORD.search(n) and DOC_WORD.search(n))
 
 
 def is_unsupported(text):
@@ -447,9 +499,10 @@ SYSTEM = (
     "des résultats des outils, en 1 ou 2 phrases courtes.\n"
     "- Dates, heures, salles d'examen ou de rattrapage, emploi des examens : "
     "get_calendrier (sans module = tout le calendrier).\n"
-    "- Étudiant malade, hospitalisé ou absent qui demande quoi faire : certificat_medical "
-    "(un seul appel, avec le module).\n"
-    "- L'étudiant veut rédiger ou préparer sa demande : demande_rattrapage.\n"
+    "- Étudiant malade, hospitalisé ou absent à un examen qui demande quoi faire : "
+    "certificat_medical (un seul appel, avec le module).\n"
+    "- L'étudiant veut rédiger ou préparer sa demande de rattrapage d'un examen : "
+    "demande_rattrapage. Jamais pour un stage.\n"
     "- Autres règles (absences, stages, notes, réclamations...) : search_reglement.\n"
     "- Si les outils ne contiennent pas la réponse : « Je ne sais pas. »\n"
     "- N'invente rien (ni date, ni article, ni conseil). Ne calcule jamais une date.\n"
@@ -477,6 +530,10 @@ class Session:
         self.trace = []
         if not text:
             return ""
+        # Coincé à l'étape « module » et demande un document de stage : on sort du formulaire.
+        if self.form and self.form.get("step") == "module" and is_stage_doc(text):
+            self.log("règle", "demande de stage : formulaire de rattrapage fermé")
+            self.form = None
         in_form = bool(self.form)
         t0 = time.time()
         answer = self._route(text)
@@ -506,13 +563,21 @@ class Session:
             return "\n\n".join(found) + "\n\nSource : " + ", ".join(
                 f"Article {n}" for n in refs if n in articles())
 
-        # ----- cas « absence » : géré par le code (état self.topic)
+        # ----- demande d'un document de stage (le règlement n'a pas de modèle)
+        if is_stage_doc(text):
+            self.topic = None
+            return self._stage_doc_answer()
+
+        # ----- cas « absence / maladie / justificatif » : géré par le code
+        # JUSTIF détecte notamment « malade », « hospitalisé », « certificat médical ».
+        # Cela permet à « je suis malade » d'entrer dans le workflow au lieu de tomber
+        # directement sur le modèle et de répondre « Je ne sais pas. ».
         n = norm(text)
-        if VAGUE_ABS.search(n) or self.topic == "absence":
+        if VAGUE_ABS.search(n) or JUSTIF.search(n) or self.topic == "absence":
             mod_txt = find_module(text)
             mod = mod_txt or (self.last_module if self.topic == "absence" else None)
             just = bool(JUSTIF.search(n)) and not NO_JUSTIF.search(n)
-            if VAGUE_ABS.search(n) or mod_txt or just or self._is_followup(text):
+            if VAGUE_ABS.search(n) or JUSTIF.search(n) or mod_txt or self._is_followup(text):
                 if mod_txt:
                     self.last_module = mod_txt
                 if just and mod:   # le modèle choisit l'outil (certificat_medical)
@@ -521,14 +586,34 @@ class Session:
                     return self._run_model(
                         f"Je suis absent à l'examen de {CAL[mod]['nom']}. {text}")
                 self.topic = "absence"
-                self.log("règle", "absence : précision demandée (module / justificatif)")
+                self.log("règle", "absence/maladie : précision demandée (module / justificatif)")
                 return self._absence_answer(mod)
             self.topic = None   # question sans rapport avec le cas en cours
 
         if not in_scope(text) and not self._is_followup(text):
             self.log("filtre", "hors sujet")
             return REFUS
-        return self._run_model(text)
+        answer = self._run_model(text)
+        # Filet de sécurité : le modèle n'a rien trouvé mais l'étudiant parle d'une absence.
+        # « Je ne sais pas » serait faux : le règlement traite ce cas (articles 3, 7, 8).
+        if answer == NO_INFO and re.search(r"absen|غياب|غبت", n):
+            self.topic = "absence"
+            self.log("règle", "absence détectée : réponse du règlement (filet de sécurité)")
+            return self._absence_answer(find_module(text))
+        return answer
+
+    def _stage_doc_answer(self) -> str:
+        """Réponse construite par le code à partir des articles 11 à 14 du PDF."""
+        self.log("règle", "document de stage : articles 11 à 14, pas de modèle de demande")
+        a = articles()
+        parts = [a[n] for n in (12, 13, 11, 14) if n in a]
+        if not parts:
+            return NO_INFO
+        return ("Le règlement ne prévoit pas de « demande de stage » : le document exigé "
+                "est la convention de stage, et je n'ai pas son modèle dans mes documents, "
+                "donc je ne peux pas la rédiger.\n\n"
+                + "\n\n".join(parts)
+                + "\n\nSource : Article 12, Article 13, Article 11, Article 14")
 
     def _absence_answer(self, mod) -> str:
         """Réponse construite par le code à partir du règlement et du calendrier."""
@@ -621,6 +706,9 @@ class Session:
         if name == "certificat_medical":
             args["hospitalisation"] = hosp    # décidé par le code, pas par le modèle
         if name == "demande_rattrapage":
+            if STAGE_WORD.search(norm(question)):   # garde-fou : jamais de formulaire pour un stage
+                self.forced = self._stage_doc_answer()
+                return "Demande de stage : pas de formulaire de rattrapage."
             return self._open_form(str(args.get("module", "")) or question, hosp)
         try:
             return execute(name, args)
@@ -689,9 +777,19 @@ class Session:
             if not draft.startswith("Objet"):
                 self.form = None
                 return draft
-            f["draft"], f["step"] = draft, "confirm"
+            f["draft"] = draft
+            f["step"] = "email"
             return (f"--- BROUILLON (non envoyé) ---\n{draft}\n------------------------------\n"
-                    "Envoyer cette demande ? Répondez « oui » ou « non ».")
+                    "À quelle adresse email voulez-vous envoyer cette demande ?")
+        if f["step"] == "email":
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text.strip()):
+                return "Adresse email invalide. Exemple : scolarite@example.tn"
+            f["email"] = text.strip()
+            f["step"] = "confirm"
+            return ("Adresse destinataire : " + f["email"] + "\n\n"
+                    "⚠️ Voulez-vous envoyer réellement cette demande par email ? "
+                    "Répondez « oui » ou « non »." )
+
         if f["step"] == "confirm":
             if low in ("oui", "o", "yes"):
                 return self.confirm(True)
@@ -712,10 +810,17 @@ class Session:
         OUTBOX.mkdir(exist_ok=True)
         path = OUTBOX / f"demande_{datetime.now():%Y%m%d_%H%M%S}.txt"
         path.write_text(f["draft"], encoding="utf-8")
-        return f"Demande enregistrée (envoi simulé) : {path}"
+
+        subject = f["draft"].splitlines()[0].replace("Objet :", "").strip()
+        result = send_email(f["email"], subject, f["draft"])
+        if result.startswith("Email envoyé"):
+            self.log("email", result)
+            return result + f"\nCopie locale : {path}"
+        self.log("email", result)
+        return result + f"\nLe brouillon reste sauvegardé localement : {path}"
 
 
-# ============================================================ ÉVALUATION (40 questions)
+# ============================================================ ÉVALUATION
 CASES = [
     ("factuelle", "Quelle est la date de l'examen de Réseaux ?", ["11/01/2027", "amphi B"]),
     ("factuelle", "Quand est le rattrapage de Réseaux ?", ["18/01/2027", "B14"]),
@@ -757,8 +862,11 @@ CASES = [
     ("demande", "Rédige ma demande de rattrapage pour Bases de données.", ["nom complet"]),
     ("demande", "Peux-tu expliquer l'Article 8 ?", ["demande écrite", "Article 8"]),
     ("demande", "Quel est le délai pour une réclamation sur une note ?", ["5 jours", "Article 15"]),
+    ("demande", "je peux avoir la demande de stage de pfe", ["convention", "Article 12"]),
     ("absence", "je suis absent", ["Article 3", "module"]),
     ("absence", "je suis absent en réseaux", ["Article 3", "18/01/2027"]),
+    ("absence", "j etait absente a un examen", ["Article 3", "module"]),
+    ("absence", "j etatit absente a un examen", ["Article 3", "module"]),
 ]
 
 
@@ -797,53 +905,401 @@ def evaluate() -> None:
 # ============================================================ INTERFACES
 def run_streamlit() -> None:
     import streamlit as st
-    st.set_page_config(page_title="ISET Charguia — Assistant", page_icon="🎓", layout="wide")
+
+    st.set_page_config(
+        page_title="ISET AI — Assistant de scolarité",
+        page_icon="🎓",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # ------------------------- SESSION -------------------------
     if "s" not in st.session_state:
         st.session_state.s = Session()
-        st.session_state.chat = []     # [(rôle, texte, trace)]
+        st.session_state.chat = []
+
     s: Session = st.session_state.s
     chat = st.session_state.chat
 
-    st.title("🎓 Assistant de scolarité — ISET Charguia")
-    st.caption("Réponses uniquement à partir du règlement et du calendrier (documents fictifs).")
+    # ------------------------- DESIGN SYSTEM -------------------------
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    :root {
+        --bg: #07111f;
+        --panel: #0c1828;
+        --panel-2: #101f33;
+        --border: rgba(148,163,184,.16);
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --accent-2: #6366f1;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(circle at 15% 0%, rgba(56,189,248,.11), transparent 30%),
+            radial-gradient(circle at 90% 10%, rgba(99,102,241,.10), transparent 28%),
+            var(--bg);
+        color: var(--text);
+        font-family: Inter, system-ui, sans-serif;
+    }
+
+    [data-testid="stHeader"] {
+        background: transparent;
+    }
+
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #091525 0%, #07111f 100%);
+        border-right: 1px solid var(--border);
+    }
+
+    [data-testid="stSidebar"] > div:first-child {
+        padding-top: 1.4rem;
+    }
+
+    .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 22px;
+    }
+
+    .brand-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        box-shadow: 0 10px 30px rgba(56,189,248,.18);
+        font-size: 22px;
+    }
+
+    .brand-title {
+        font-size: 18px;
+        font-weight: 800;
+        color: #fff;
+        line-height: 1.1;
+    }
+
+    .brand-subtitle {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 3px;
+    }
+
+    .hero {
+        max-width: 900px;
+        margin: 28px auto 26px auto;
+        padding: 34px 34px 30px 34px;
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        background:
+            linear-gradient(135deg, rgba(56,189,248,.08), rgba(99,102,241,.07)),
+            rgba(12,24,40,.78);
+        box-shadow: 0 20px 60px rgba(0,0,0,.22);
+    }
+
+    .hero-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(56,189,248,.10);
+        border: 1px solid rgba(56,189,248,.20);
+        color: #7dd3fc;
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 14px;
+    }
+
+    .hero h1 {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 44px);
+        line-height: 1.08;
+        letter-spacing: -1.5px;
+        color: #fff;
+    }
+
+    .hero h1 span {
+        background: linear-gradient(90deg, #7dd3fc, #818cf8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+        color: #a9b8ca;
+        margin: 14px 0 0 0;
+        font-size: 15px;
+        line-height: 1.7;
+        max-width: 720px;
+    }
+
+    .feature-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        max-width: 900px;
+        margin: 0 auto 20px auto;
+    }
+
+    .feature {
+        padding: 14px;
+        border: 1px solid var(--border);
+        background: rgba(12,24,40,.68);
+        border-radius: 16px;
+    }
+
+    .feature-icon {
+        font-size: 18px;
+        margin-bottom: 6px;
+    }
+
+    .feature-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: #e2e8f0;
+    }
+
+    .feature-text {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 3px;
+        line-height: 1.45;
+    }
+
+    .section-label {
+        color: #64748b;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 1.1px;
+        text-transform: uppercase;
+        margin: 18px 0 8px 2px;
+    }
+
+    .status-card {
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(255,255,255,.025);
+        margin-bottom: 8px;
+    }
+
+    .status-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #cbd5e1;
+    }
+
+    .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 10px rgba(34,197,94,.55);
+    }
+
+    .security {
+        margin-top: 14px;
+        padding: 12px;
+        border-radius: 13px;
+        background: rgba(34,197,94,.06);
+        border: 1px solid rgba(34,197,94,.12);
+        color: #86efac;
+        font-size: 11px;
+        line-height: 1.5;
+    }
+
+    [data-testid="stChatMessage"] {
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 8px 12px;
+        margin-bottom: 10px;
+        background: rgba(12,24,40,.55);
+    }
+
+    [data-testid="stChatMessage"] p {
+        line-height: 1.7;
+    }
+
+    [data-testid="stChatInput"] {
+        border-top: 1px solid var(--border);
+        padding-top: 10px;
+    }
+
+    [data-testid="stChatInput"] textarea {
+        background: #0c1828 !important;
+        border: 1px solid rgba(148,163,184,.22) !important;
+        border-radius: 16px !important;
+        color: #fff !important;
+    }
+
+    .stButton > button {
+        border: 1px solid rgba(148,163,184,.16);
+        border-radius: 12px;
+        background: rgba(255,255,255,.035);
+        color: #dbeafe;
+        transition: all .18s ease;
+        min-height: 42px;
+    }
+
+    .stButton > button:hover {
+        border-color: rgba(56,189,248,.42);
+        background: rgba(56,189,248,.08);
+        color: #fff;
+        transform: translateY(-1px);
+    }
+
+    .small-note {
+        color: #64748b;
+        font-size: 10px;
+        line-height: 1.5;
+        text-align: center;
+        margin-top: 12px;
+    }
+
+    @media (max-width: 800px) {
+        .hero { padding: 24px 20px; margin-top: 10px; }
+        .feature-row { grid-template-columns: 1fr; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ------------------------- SIDEBAR -------------------------
     with st.sidebar:
-        st.write(f"**Modèle :** `{MODEL}`")
-        st.write(f"**Outils via MCP :** {'oui' if USE_MCP else 'non (appel direct)'}")
-        for ex in ["Combien de semaines dure le stage ?",
-                   "Je suis absent",
-                   "Je suis malade pour BDD, que dois-je faire ?",
-                   "Quand est le rattrapage de réseaux ?",
-                   "Je veux préparer une demande de rattrapage pour anglais"]:
-            if st.button(ex, use_container_width=True):
-                st.session_state.example = ex
+        st.markdown("""
+        <div class="brand">
+            <div class="brand-icon">🎓</div>
+            <div>
+                <div class="brand-title">ISET AI</div>
+                <div class="brand-subtitle">Assistant de scolarité</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown('<div class="section-label">Assistant</div>', unsafe_allow_html=True)
+
+        examples = [
+            ("📅", "Calendrier des examens"),
+            ("🔄", "Rattrapage de Réseaux"),
+            ("🏥", "Je suis malade pour BDD"),
+            ("📄", "Demande de rattrapage"),
+            ("🎓", "Informations sur le stage"),
+        ]
+
+        for icon, label in examples:
+            if st.button(f"{icon}  {label}", use_container_width=True):
+                st.session_state.example = label
                 st.rerun()
-        if st.button("🧹 Nouvelle conversation", use_container_width=True):
+
+        st.markdown('<div class="section-label">Système</div>', unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="status-card">
+            <div class="status-line"><span class="dot"></span> Agent opérationnel</div>
+        </div>
+        <div class="status-card">
+            <div style="font-size:10px;color:#64748b;margin-bottom:4px;">MODÈLE</div>
+            <div style="font-size:12px;color:#cbd5e1;">{MODEL}</div>
+        </div>
+        <div class="status-card">
+            <div style="font-size:10px;color:#64748b;margin-bottom:4px;">MCP</div>
+            <div style="font-size:12px;color:#cbd5e1;">{"Activé" if USE_MCP else "Appel direct"}</div>
+        </div>
+        <div class="security">🛡️ Réponses fondées sur les sources de l'ISET. Les demandes sensibles nécessitent une validation humaine.</div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("")
+        if st.button("🧹  Nouvelle conversation", use_container_width=True):
             st.session_state.s = Session()
             st.session_state.chat = []
             st.rerun()
 
+        st.markdown(
+            '<div class="small-note">ISET Charguia • Année universitaire 2026–2027</div>',
+            unsafe_allow_html=True
+        )
+
+    # ------------------------- MAIN HEADER -------------------------
+    if not chat:
+        st.markdown("""
+        <div class="hero">
+            <div class="hero-badge">✦ IA • Scolarité ISET Charguia</div>
+            <h1>Bonjour 👋<br>Comment puis-je <span>vous aider ?</span></h1>
+            <p>
+                Votre assistant intelligent pour les examens, rattrapages, absences,
+                stages, certificats et règlement des études.
+            </p>
+        </div>
+
+        <div class="feature-row">
+            <div class="feature">
+                <div class="feature-icon">📚</div>
+                <div class="feature-title">Règlement</div>
+                <div class="feature-text">Recherche dans les articles officiels disponibles.</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">📅</div>
+                <div class="feature-title">Calendrier</div>
+                <div class="feature-text">Dates, heures et salles des examens et rattrapages.</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🛡️</div>
+                <div class="feature-title">Réponses fiables</div>
+                <div class="feature-text">L'agent évite d'inventer les dates et informations.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="max-width:900px;margin:10px auto 18px auto;">
+            <div style="font-size:13px;color:#64748b;">ISET CHARGUIA</div>
+            <div style="font-size:25px;font-weight:800;color:#f8fafc;">Assistant de scolarité</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ------------------------- CHAT -------------------------
     for role, content, trace in chat:
-        with st.chat_message(role):
+        avatar = "👤" if role == "user" else "🎓"
+        with st.chat_message(role, avatar=avatar):
             st.markdown(content.replace("\n", "  \n"))
             if trace:
-                with st.expander("Étapes suivies par l'agent"):
+                with st.expander("🔎 Voir les étapes de l'agent"):
                     for e in trace:
                         st.markdown(f"**{e['etape']}** — `{e['detail']}`")
 
-    if s.form and s.form.get("step") == "confirm":   # validation humaine explicite
+    # ------------------------- HUMAN CONFIRMATION -------------------------
+    if s.form and s.form.get("step") == "confirm":
+        st.markdown(
+            '<div style="margin:14px 0 8px;color:#fbbf24;font-size:12px;font-weight:700;">'
+            '⚠️ Validation requise avant envoi</div>',
+            unsafe_allow_html=True
+        )
         c1, c2 = st.columns(2)
-        for col, label, yes in ((c1, "✅ Envoyer la demande", True), (c2, "❌ Annuler", False)):
-            if col.button(label, use_container_width=True):
-                chat.append(("assistant", s.confirm(yes), []))
-                st.rerun()
+        if c1.button("📧 Envoyer par email", use_container_width=True):
+            chat.append(("assistant", s.confirm(True), []))
+            st.rerun()
+        if c2.button("❌ Ne pas envoyer", use_container_width=True):
+            chat.append(("assistant", s.confirm(False), []))
+            st.rerun()
 
-    prompt = st.chat_input("Posez votre question (absences, rattrapages, stages...)")
+    # ------------------------- INPUT -------------------------
+    prompt = st.chat_input("Écrivez votre question…")
     if prompt is None:
         prompt = st.session_state.pop("example", None)
+
     if prompt:
         chat.append(("user", prompt, []))
-        with st.spinner("L'agent travaille…"):
-            answer = s.ask(prompt)
+        with st.chat_message("assistant", avatar="🎓"):
+            with st.spinner("Analyse de votre demande…"):
+                answer = s.ask(prompt)
+            st.markdown(answer.replace("\n", "  \n"))
         chat.append(("assistant", answer, list(s.trace)))
         st.rerun()
 
@@ -888,3 +1344,4 @@ if __name__ == "__main__":
         evaluate()
     else:
         run_terminal()
+
