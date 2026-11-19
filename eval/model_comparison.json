@@ -1,0 +1,489 @@
+{
+  "models": [
+    {
+      "model": "llama3.2:latest",
+      "mode": "fair-semantic-v2",
+      "total": 12,
+      "success": 9,
+      "intent_accuracy_percent": 91.67,
+      "language_accuracy_percent": 91.67,
+      "module_accuracy_percent": 91.67,
+      "accuracy_percent": 75.0,
+      "total_seconds": 46.908,
+      "average_seconds": 3.909,
+      "results": [
+        {
+          "question": "متى امتحان الإنجليزية؟",
+          "expected": {
+            "q": "متى امتحان الإنجليزية؟",
+            "intent": "calendar_exam",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "calendar_exam",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 13.236
+        },
+        {
+          "question": "Quand est le rattrapage de Réseaux ?",
+          "expected": {
+            "q": "Quand est le rattrapage de Réseaux ?",
+            "intent": "calendar_resit",
+            "module": "réseaux",
+            "language": "fr"
+          },
+          "got": {
+            "intent": "calendar_resit",
+            "module": "réseaux",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 3.304
+        },
+        {
+          "question": "je suis malade pour BDD, je dois faire quoi ?",
+          "expected": {
+            "q": "je suis malade pour BDD, je dois faire quoi ?",
+            "intent": "medical",
+            "module": "bases de données",
+            "language": "fr"
+          },
+          "got": {
+            "intent": "medical",
+            "module": "bases de données",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 3.238
+        },
+        {
+          "question": "كنت مريضًا يوم اختبار الإنجليزية، ماذا يمكنني أن أفعل؟",
+          "expected": {
+            "q": "كنت مريضًا يوم اختبار الإنجليزية، ماذا يمكنني أن أفعل؟",
+            "intent": "medical",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "medical",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 3.386
+        },
+        {
+          "question": "Je n'ai pas justifié mon absence à l'examen d'anglais.",
+          "expected": {
+            "q": "Je n'ai pas justifié mon absence à l'examen d'anglais.",
+            "intent": "absence",
+            "module": "anglais",
+            "language": "fr"
+          },
+          "got": {
+            "intent": "absence",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "intent_ok": true,
+          "language_ok": false,
+          "module_ok": true,
+          "success": false,
+          "seconds": 3.545
+        },
+        {
+          "question": "Que dit l'Article 8 ?",
+          "expected": {
+            "q": "Que dit l'Article 8 ?",
+            "intent": "regulation",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "regulation",
+            "module": "null",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 2.744
+        },
+        {
+          "question": "Combien de semaines minimum dure le stage ?",
+          "expected": {
+            "q": "Combien de semaines minimum dure le stage ?",
+            "intent": "stage",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "stage",
+            "module": "projet de fin de module",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": false,
+          "success": false,
+          "seconds": 3.375
+        },
+        {
+          "question": "Quel est le délai pour une réclamation sur une note ?",
+          "expected": {
+            "q": "Quel est le délai pour une réclamation sur une note ?",
+            "intent": "grade_complaint",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "grade_complaint",
+            "module": "null",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 3.118
+        },
+        {
+          "question": "أريد طلب استدراك لشبكات",
+          "expected": {
+            "q": "أريد طلب استدراك لشبكات",
+            "intent": "request",
+            "module": "réseaux",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "request",
+            "module": "réseaux",
+            "language": "ar"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 2.779
+        },
+        {
+          "question": "hello",
+          "expected": {
+            "q": "hello",
+            "intent": "greeting",
+            "module": null,
+            "language": "en"
+          },
+          "got": {
+            "intent": "greeting",
+            "module": null,
+            "language": "en"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 2.138
+        },
+        {
+          "question": "Donne-moi une recette de pizza.",
+          "expected": {
+            "q": "Donne-moi une recette de pizza.",
+            "intent": "off_topic",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "off_topic",
+            "module": "null",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 2.984
+        },
+        {
+          "question": "ما هو استدراك الإنجليزية؟",
+          "expected": {
+            "q": "ما هو استدراك الإنجليزية؟",
+            "intent": "calendar_resit",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "off_topic",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "intent_ok": false,
+          "language_ok": true,
+          "module_ok": true,
+          "success": false,
+          "seconds": 3.061
+        }
+      ]
+    },
+    {
+      "model": "qwen2.5:0.5b",
+      "mode": "fair-semantic-v2",
+      "total": 12,
+      "success": 6,
+      "intent_accuracy_percent": 75.0,
+      "language_accuracy_percent": 100.0,
+      "module_accuracy_percent": 58.33,
+      "accuracy_percent": 50.0,
+      "total_seconds": 13.695,
+      "average_seconds": 1.141,
+      "results": [
+        {
+          "question": "متى امتحان الإنجليزية؟",
+          "expected": {
+            "q": "متى امتحان الإنجليزية؟",
+            "intent": "calendar_exam",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "calendar_exam",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 3.255
+        },
+        {
+          "question": "Quand est le rattrapage de Réseaux ?",
+          "expected": {
+            "q": "Quand est le rattrapage de Réseaux ?",
+            "intent": "calendar_resit",
+            "module": "réseaux",
+            "language": "fr"
+          },
+          "got": {
+            "intent": "calendar_resit",
+            "module": "réseaux",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 1.034
+        },
+        {
+          "question": "je suis malade pour BDD, je dois faire quoi ?",
+          "expected": {
+            "q": "je suis malade pour BDD, je dois faire quoi ?",
+            "intent": "medical",
+            "module": "bases de données",
+            "language": "fr"
+          },
+          "got": {
+            "intent": "medical",
+            "module": "BDD",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": false,
+          "success": false,
+          "seconds": 0.907
+        },
+        {
+          "question": "كنت مريضًا يوم اختبار الإنجليزية، ماذا يمكنني أن أفعل؟",
+          "expected": {
+            "q": "كنت مريضًا يوم اختبار الإنجليزية، ماذا يمكنني أن أفعل؟",
+            "intent": "medical",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "medical",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 1.219
+        },
+        {
+          "question": "Je n'ai pas justifié mon absence à l'examen d'anglais.",
+          "expected": {
+            "q": "Je n'ai pas justifié mon absence à l'examen d'anglais.",
+            "intent": "absence",
+            "module": "anglais",
+            "language": "fr"
+          },
+          "got": {
+            "intent": "absence",
+            "module": "anglais",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 1.082
+        },
+        {
+          "question": "Que dit l'Article 8 ?",
+          "expected": {
+            "q": "Que dit l'Article 8 ?",
+            "intent": "regulation",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "regulation",
+            "module": "null",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 0.88
+        },
+        {
+          "question": "Combien de semaines minimum dure le stage ?",
+          "expected": {
+            "q": "Combien de semaines minimum dure le stage ?",
+            "intent": "stage",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "stage",
+            "module": "bases de données",
+            "language": "fr"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": false,
+          "success": false,
+          "seconds": 0.96
+        },
+        {
+          "question": "Quel est le délai pour une réclamation sur une note ?",
+          "expected": {
+            "q": "Quel est le délai pour une réclamation sur une note ?",
+            "intent": "grade_complaint",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "request",
+            "module": "grade_complaint",
+            "language": "fr"
+          },
+          "intent_ok": false,
+          "language_ok": true,
+          "module_ok": false,
+          "success": false,
+          "seconds": 0.941
+        },
+        {
+          "question": "أريد طلب استدراك لشبكات",
+          "expected": {
+            "q": "أريد طلب استدراك لشبكات",
+            "intent": "request",
+            "module": "réseaux",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "request",
+            "module": "bases de données",
+            "language": "ar"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": false,
+          "success": false,
+          "seconds": 0.921
+        },
+        {
+          "question": "hello",
+          "expected": {
+            "q": "hello",
+            "intent": "greeting",
+            "module": null,
+            "language": "en"
+          },
+          "got": {
+            "intent": "greeting",
+            "module": "null",
+            "language": "en"
+          },
+          "intent_ok": true,
+          "language_ok": true,
+          "module_ok": true,
+          "success": true,
+          "seconds": 0.703
+        },
+        {
+          "question": "Donne-moi une recette de pizza.",
+          "expected": {
+            "q": "Donne-moi une recette de pizza.",
+            "intent": "off_topic",
+            "module": null,
+            "language": "fr"
+          },
+          "got": {
+            "intent": "regulation",
+            "module": "pizza",
+            "language": "fr"
+          },
+          "intent_ok": false,
+          "language_ok": true,
+          "module_ok": false,
+          "success": false,
+          "seconds": 0.84
+        },
+        {
+          "question": "ما هو استدراك الإنجليزية؟",
+          "expected": {
+            "q": "ما هو استدراك الإنجليزية؟",
+            "intent": "calendar_resit",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "got": {
+            "intent": "regulation",
+            "module": "anglais",
+            "language": "ar"
+          },
+          "intent_ok": false,
+          "language_ok": true,
+          "module_ok": true,
+          "success": false,
+          "seconds": 0.953
+        }
+      ]
+    }
+  ],
+  "note": "Fair semantic comparison. One LLM call per case/model; no production-agent routing or RAG is included."
+}

@@ -50,7 +50,7 @@ load_dotenv()
 # ============================================================
 
 APP_NAME = "Assistant de scolarité ISET Charguia"
-MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
+MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "ollama")
 MAX_TOOL_ROUNDS = max(1, min(int(os.getenv("MAX_TOOL_ROUNDS", "5")), 8))
@@ -67,12 +67,10 @@ OUTBOX = PROJECT_ROOT / "outbox"
 OUTBOX.mkdir(exist_ok=True)
 
 REGULATION_PDF_CANDIDATES = [
-    PROJECT_ROOT / "Reglement_etudes_ISET_Charguia_2026-2027 (1)(1).pdf",
     PROJECT_ROOT / "Reglement_etudes_ISET_Charguia_2026-2027 (1).pdf",
     PROJECT_ROOT / "reglement.pdf",
 ]
 PROJECT_PDF_CANDIDATES = [
-    PROJECT_ROOT / "Projet_assistant_scolarite_IA_agentique (1)(1).pdf",
     PROJECT_ROOT / "Projet_assistant_scolarite_IA_agentique (1).pdf",
 ]
 
@@ -582,19 +580,13 @@ def is_absence_question(text: str) -> bool:
     return contains_any(text, [
         "absence", "absent", "absente", "sans justificatif", "pas justifie", "pas justifiée",
         "غائب", "غائبة", "غياب", "لم أحضر", "لم احضر", "غبت", "غيبت",
-        "غيبت عن الامتحان", "لم احضر الامتحان", "لم أحضر الامتحان",
         "rate l examen", "rater l examen", "manque l examen",
         "pas venu a l examen", "pas present", "pas presente", "j ai rate", "j'ai rate",
     ])
 
 
 def is_medical_question(text: str) -> bool:
-    return contains_any(text, [
-        "certificat", "medical", "medecin", "malade", "maladie", "hospital",
-        "justificatif medical",
-        "مريض", "مريضة", "مرض", "المرض", "طبيب", "شهادة طبية",
-        "شهاده طبيه", "مستشفى", "المستشفى", "استشفاء", "دخلت المستشفى",
-    ])
+    return contains_any(text, ["certificat", "medical", "medecin", "malade", "maladie", "hospital", "justificatif medical"])
 
 
 def is_stage_question(text: str) -> bool:
@@ -647,17 +639,6 @@ def scope_decision(text: str) -> str:
         return "greeting"
     if looks_like_unsupported_fact(n):
         return "missing"
-    # Arabic is an explicit project bonus. A valid Arabic scolarity request
-    # must not be rejected just because the French keyword list does not match.
-    if (
-        is_absence_question(text)
-        or is_medical_question(text)
-        or is_calendar_question(text)
-        or is_stage_question(text)
-        or is_grade_complaint(text)
-        or detect_module(text)
-    ):
-        return "in_scope"
     if any(term in n for term in SCOLARITY_TERMS):
         return "in_scope"
     if detect_module(n):
@@ -979,15 +960,6 @@ Règles :
 - Comprends le sens, pas seulement les mots exacts. Gère français, anglais,
   arabe et fautes simples.
 - Exemple : « متى امتحان الإنجليزية؟ » = calendar_exam + Anglais.
-- Exemple : « كنت مريضًا يوم اختبار الإنجليزية، ماذا يمكنني أن أفعل؟ »
-  = medical + Anglais + ar.
-- Exemple : « أنا غائب عن امتحان الإنجليزية، ماذا يجب أن أفعل؟ »
-  = absence + Anglais + ar.
-- Une absence liée à une maladie, un médecin, un certificat médical ou une
-  hospitalisation doit être classée "medical".
-- Une absence à un examen sans précision médicale doit être classée "absence".
-- N'utilise JAMAIS "absence_exam", "medical_absence" ou une autre intention
-  non listée : utilise "absence" ou "medical".
 - « dans quelle salle ? », « et après ? », « quand est-il ? » peuvent dépendre
   du contexte précédent.
 - N'invente jamais un module. Si incertain, module=null.
@@ -1016,13 +988,6 @@ MESSAGE ACTUEL :
                 return result
             allowed = {"calendar_exam", "calendar_resit", "calendar_general", "absence", "medical", "regulation", "stage", "grade_complaint", "request", "greeting", "off_topic", "missing", "followup", "unknown"}
             intent = str(parsed.get("intent") or "unknown").strip().lower()
-
-            # Normalize common semantic variants returned by local models.
-            if intent in {"absence_exam", "exam_absence", "absence examen"}:
-                intent = "absence"
-            elif intent in {"medical_absence", "absence_medicale", "absence médicale"}:
-                intent = "medical"
-
             if intent not in allowed:
                 intent = "unknown"
             module_raw = parsed.get("module")
@@ -1070,25 +1035,6 @@ MESSAGE ACTUEL :
         understanding = understanding or {}
         module = understanding.get("module") or detect_module(question)
         semantic_intent = understanding.get("intent", "unknown")
-
-        # The local LLM is only a semantic router. If it returns an unknown
-        # intent, recover routing from deterministic signals without inventing
-        # any factual information.
-        if semantic_intent == "unknown":
-            if is_medical_question(question):
-                semantic_intent = "medical"
-            elif is_absence_question(question):
-                semantic_intent = "absence"
-            elif is_calendar_question(question) and module:
-                semantic_intent = (
-                    "calendar_resit"
-                    if any(x in normalize(question) for x in ["rattrap", "استدراك"])
-                    else "calendar_exam"
-                )
-            elif is_stage_question(question):
-                semantic_intent = "stage"
-            elif is_grade_complaint(question):
-                semantic_intent = "grade_complaint"
 
         if module and semantic_intent in {"calendar_exam", "calendar_resit"}:
             e = CALENDAR[module]
@@ -1908,6 +1854,60 @@ def conversation_smoke_test() -> int:
 
 
 # ============================================================
+# BONUS: SPECIALIZED AGENTS
+# ============================================================
+
+class RegulationResearchAgent:
+    """Specialized agent for regulation/calendar research.
+
+    It reuses the same verified tool layer as the main agent; it never invents
+    a rule and always returns source-grounded facts.
+    """
+    def __init__(self, session: Session):
+        self.session = session
+
+    def answer(self, question: str) -> str:
+        self.session.add_trace("agent spécialisé", "RegulationResearchAgent → recherche réglementaire")
+        return self.session.ask(question)
+
+
+class RequestDraftAgent:
+    """Specialized agent for administrative request drafting.
+
+    Drafting is local and never sends anything. Missing student information is
+    requested rather than invented.
+    """
+    def __init__(self, session: Session):
+        self.session = session
+
+    def draft(self, name: str = "", student_id: str = "", module: str = "",
+              missed_exam_date: str = "", justification: str = "") -> str:
+        self.session.add_trace("agent spécialisé", "RequestDraftAgent → brouillon de demande")
+        return self.session.tools.generer_demande_rattrapage(
+            name, student_id, module, missed_exam_date, justification
+        )
+
+
+def multi_agent_smoke_test() -> int:
+    """Verify the two specialized agents required by the bonus architecture."""
+    session = Session(model=MODEL)
+    research = RegulationResearchAgent(session)
+    drafting = RequestDraftAgent(session)
+    a1 = research.answer("Quel est le délai pour une réclamation sur une note ?")
+    a2 = drafting.draft("Karim Khelifi", "TEST-001", "Réseaux", "11/01/2027", "absence justifiée")
+    checks = [
+        ("regulation agent", "5 jours ouvrables" in normalize(a1) and "article 15" in normalize(a1)),
+        ("drafting agent", "karim" in normalize(a2) and "réseaux" in normalize(a2)),
+        ("no send", "envoy" not in normalize(a2) or "ne sera pas envoyé" in normalize(a2)),
+    ]
+    for name, ok in checks:
+        print(f"[{'PASS' if ok else 'FAIL'}] {name}")
+    passed = sum(ok for _, ok in checks)
+    print(f"MULTI-AGENT-SMOKE: {passed}/{len(checks)}")
+    return 0 if passed == len(checks) else 1
+
+
+# ============================================================
 # MCP
 # ============================================================
 
@@ -1949,7 +1949,7 @@ def run_streamlit() -> None:
 
     st.set_page_config(
         page_title="ISET Charguia — Assistant IA",
-        page_icon="🎓",
+        page_icon="isetch.jpg",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -1995,7 +1995,7 @@ def run_streamlit() -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <h1>🎓 Assistant de scolarité — ISET Charguia</h1>
+            <h1><img src=isetch.jpg></img> Assistant de scolarité — ISET Charguia</h1>
             <p>Agent IA local • règlement + calendrier • RAG • outils • mémoire conversationnelle</p>
             <div style="margin-top:.65rem">
                 <span class="pill">🤖 {MODEL}</span>
@@ -2088,6 +2088,8 @@ def print_help() -> None:
         "  python agent_v3.py                  # terminal chat\n"
         "  python agent_v3.py --self-test      # tests without Ollama\n"
         "  python agent_v3.py --evaluate       # 40-question evaluation\n"
+        "  python agent_v3.py --conversation-smoke # multi-turn memory test\n"
+        "  python agent_v3.py --multi-agent-test  # specialized agents test\n"
         "  python agent_v3.py --mcp            # MCP server\n"
         "  streamlit run agent_v3.py           # web interface\n"
     )
@@ -2099,6 +2101,7 @@ def main() -> int:
     parser.add_argument("--evaluate", action="store_true")
     parser.add_argument("--mcp", action="store_true")
     parser.add_argument("--conversation-smoke", action="store_true")
+    parser.add_argument("--multi-agent-test", action="store_true")
     args = parser.parse_args()
 
     if args.self_test:
@@ -2112,6 +2115,8 @@ def main() -> int:
         return 0
     if args.conversation_smoke:
         return conversation_smoke_test()
+    if args.multi_agent_test:
+        return multi_agent_smoke_test()
 
     print("=" * 72)
     print(APP_NAME)

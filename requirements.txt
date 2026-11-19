@@ -1,0 +1,6 @@
+openai>=1.0
+python-dotenv>=1.0
+pypdf>=5.0
+chromadb>=1.5
+streamlit>=1.40
+fastmcp>=2.0
