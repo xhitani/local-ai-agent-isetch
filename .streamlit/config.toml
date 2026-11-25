@@ -1,0 +1,13 @@
+# Thème clair forcé : évite le texte illisible quand le navigateur est en mode sombre.
+[theme]
+base = "light"
+primaryColor = "#1f5fbf"
+backgroundColor = "#f5f7fa"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1c2733"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

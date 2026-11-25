@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+chroma_db/
+outbox/
+saved_chats/
+resultats.txt
+*.patch
+mise-a-jour-rag/
+resultats.txt
+*.patch
+mise-a-jour-rag/
+resultats.txt
+*.patch
+mise-a-jour-rag/
